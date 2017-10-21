@@ -1,7 +1,11 @@
 ### Dependencies
 Cython
+<br />
 PyQt4
+<br />
+PyOpenGL
 
+### Use
 
 ```
 python setup.py build_ext -i
