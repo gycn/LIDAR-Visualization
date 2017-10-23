@@ -1,5 +1,6 @@
 import cv2
 from LIDARVisualizer import *
+import lmdb
 import numpy as np
 import rosbag
 import sys
@@ -11,17 +12,38 @@ from PyQt4.QtGui import QApplication, QWidget, QImage, QPixmap, QLabel, QGridLay
 class BagVisualizer(QWidget):
     def __init__(self, parent, bag):
         super(BagVisualizer, self).__init__(parent)
+
+
+        self.right_image_string = 'right_image {}'
+        self.lidar_string = 'lidar {}'
         with rosbag.Bag(bag) as bag:
+            print("Loading Image Messages")
             right_image_msgs = [msg for msg in bag.read_messages(
                                           topics=[
                                                   '/right_camera'
                                                 + '/pg_16492281/' 
                                                 + 'image_color_flipped'
                                                 + '/compressed'])]
-            print(sys.getsizeof(right_image_msgs))
+            print("Loading LIDAR Messages")
             lidar_msgs = [msg for msg in bag.read_messages(topics=['/velodyne_points'])]
-            print(sys.getsizeof(lidar_msgs))
-       
+
+            print("Creating DB")
+            self.env = lmdb.open('mylmdb', 
+                                map_size = (len(right_image_msgs) + len(lidar_msgs)) * 13000000,
+                                writemap = True)
+            self.db = self.env.begin(write=True)
+
+            print("Loading Image Data")
+            self.right_image_timestamps = [msg.timestamp for msg in right_image_msgs]
+            for i in range(len(right_image_msgs)):
+                self.db.put(self.right_image_string.format(i), 
+                            right_image_msgs[i].message.data)
+            
+            print("Loading LIDAR Data")
+            self.lidar_timestamps = [msg.timestamp for msg in lidar_msgs]
+            for i in range(len(lidar_msgs)):
+                self.db.put(self.lidar_string.format(i), lidar_msgs[i].message.data)
+            
         # For LIDAR
         self.lidar_vis = LIDARVisualizer(self)
 
@@ -31,48 +53,37 @@ class BagVisualizer(QWidget):
         # Scrubber
         self.scrubber = QSlider(Qt.Horizontal, self)
         
-        # Process images
-        print("Loading images")
-        self.right_image_timestamps = [msg.timestamp for msg in right_image_msgs]
-        self.right_images = [self.process_image_message(msg.message.data) for msg in right_image_msgs]
-
         self.current_frame = 0
-
-        # Load LIDAR
-        print("Loading LIDAR data")
-        self.lidar_readings = [msg.message.data for msg in lidar_msgs]
-        self.lidar_timestamps = [msg.timestamp for msg in lidar_msgs]
  
         self.scrubber.setTickInterval(1)
         self.scrubber.setMinimum(0)
-        self.scrubber.setMaximum(len(self.right_images) - 1)
+        self.scrubber.setMaximum(len(self.right_image_timestamps) - 1)
         self.scrubber.setValue(0)
         self.scrubber.valueChanged.connect(self.set_frame)
 
     def set_frame(self):
         i = self.scrubber.value()
         self.load_image(i)
-        lidar_index = min(i / 3, len(self.lidar_readings) - 1)
+        lidar_index = min(i / 3, len(self.lidar_timestamps) - 1)
         
-        #lidar_timestamp = self.lidar_timestamps[lidar_index]
-        #image_timestamp = self.right_image_timestamps[i]
-        #if lidar_timestamp > image_timestamp:
-        #    while lidar_index != 0:
-        #        lidar_index -= 1 
-        #        new_lidar_timestamp = self.lidar_timestamps[lidar_index] 
-        #        if new_lidar_timestamp < image_timestamp:
-        #            break
+        lidar_timestamp = self.lidar_timestamps[lidar_index]
+        image_timestamp = self.right_image_timestamps[i]
+        if lidar_timestamp > image_timestamp:
+            while lidar_index != 0:
+                lidar_index -= 1 
+                new_lidar_timestamp = self.lidar_timestamps[lidar_index] 
+                if new_lidar_timestamp < image_timestamp:
+                    break
 
-        #elif lidar_timestamp < image_timestamp:
-        #    while lidar_index != len(self.lidar_timestamps) - 1:
-        #        lidar_index += 1 
-        #        new_lidar_timestamp = self.lidar_timestamps[lidar_index] 
-        #        if new_lidar_timestamp > image_timestamp:
-        #            lidar_index -= 1
-        #            break
+        elif lidar_timestamp < image_timestamp:
+            while lidar_index != len(self.lidar_timestamps) - 1:
+                lidar_index += 1 
+                new_lidar_timestamp = self.lidar_timestamps[lidar_index] 
+                if new_lidar_timestamp > image_timestamp:
+                    lidar_index -= 1
+                    break
         
-
-        self.lidar_vis.load_xyzi_pc_and_render(self.lidar_readings[lidar_index])
+        self.lidar_vis.load_xyzi_pc_and_render(str(self.db.get(self.lidar_string.format(lidar_index))))
         self.current_frame = self.scrubber.value()
 
     def process_image_message(self, img):
@@ -80,15 +91,15 @@ class BagVisualizer(QWidget):
                                  cv2.IMREAD_COLOR)
         im = cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
 
-        qim = QImage(im.data, im.shape[1], im.shape[0], im.strides[0], QImage.Format_RGB888)
-        return qim
+        return im
 
     def load_image(self, i):
         right_height = self.right_image_label.height()
         right_width  = self.right_image_label.width()
         right_size = min(right_height, right_width)
         
-        qim = self.right_images[i] 
+        im = self.process_image_message(self.db.get(self.right_image_string.format(i)))
+        qim = QImage(im.data, im.shape[1], im.shape[0], im.strides[0], QImage.Format_RGB888)
         pix = QPixmap.fromImage(qim).scaled(right_size, right_size, Qt.KeepAspectRatio)
         self.right_image_label.setPixmap(pix)
 
