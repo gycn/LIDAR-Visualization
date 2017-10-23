@@ -21,8 +21,7 @@ class LIDARVisualizer(QGLWidget):
   GL_MULTISAMPLE = 0x809D
   rot = 0.0
 
-  def __init__(self, parent, bag=None, csv=None):
-    self.bag = bag
+  def __init__(self, parent, csv=None):
     self.csv = csv
       
     f = QGLFormat.defaultFormat()
@@ -37,20 +36,7 @@ class LIDARVisualizer(QGLWidget):
     self.last_x = 0
     self.last_y = 0
 
-    if self.bag:
-      import rosbag
-      print("Loading LIDAR data")
-      self.readings = [msg.message.data for msg in rosbag.Bag(self.bag)
-                       if msg.topic == '/velodyne_points']
-      
-      self.scrubber = QSlider(Qt.Horizontal, self)
-      self.scrubber.valueChanged.connect(self.set_frame)
-      
-      self.scrubber.setTickInterval(1)
-      self.scrubber.setMinimum(0)
-      self.scrubber.setMaximum(len(self.readings) - 1)
-
-    elif self.csv:
+    if self.csv:
       with open(self.csv) as f:
         messages = [[float(i) for i in line.split(',')] for line in f.readlines()]
         messages = [operator.add(msg, [0] * (7 - len(msg))) for msg in messages]
@@ -68,8 +54,6 @@ class LIDARVisualizer(QGLWidget):
   def resizeGL(self, w, h):
     GL.glViewport(0, 0, w, h)
     self.lidar.set_screen_size(w, h)
-    if self.bag:
-      self.scrubber.setGeometry(0, 0, w, 30)
 
   def paintGL(self):
     self.lidar.render_frame() 
@@ -113,8 +97,9 @@ if __name__ == '__main__':
   import rosbag
 
   app = QApplication(sys.argv[:1])
-  if len(sys.argv) == 1:
-    print("Please pass in a ROS bag.")
+  if len(sys.argv) == 1 or sys.argv[1].find('.csv') < 0:
+    print("Please pass in a Point Cloud CSV file.")
+    sys.exit(0)
 
   f = QGLFormat.defaultFormat()
   f.setVersion(3, 2)
@@ -127,10 +112,7 @@ if __name__ == '__main__':
       sys.exit(0)
   filename, file_extension = os.path.splitext(sys.argv[1]) 
 
-  if file_extension == '.csv':
-    widget = LIDARVisualizer(None, csv=sys.argv[1])
-  else:
-    widget = LIDARVisualizer(None, bag=sys.argv[1])
+  widget = LIDARVisualizer(None, csv=sys.argv[1])
   
   widget.resize(1280, 720)
 
