@@ -5,17 +5,19 @@ import numpy as np
 import rosbag
 import sys
 
-from PyQt4.QtCore import Qt
-from PyQt4.QtGui import QApplication, QWidget, QImage, QPixmap, QLabel, QGridLayout, QSlider
+from PyQt4.QtCore import Qt, QTimer
+from PyQt4.QtGui import QApplication, QWidget, QImage, QPixmap, QLabel, QSlider
 
 
 class BagVisualizer(QWidget):
     def __init__(self, parent, bag):
         super(BagVisualizer, self).__init__(parent)
 
-
+        # Database keys
         self.right_image_string = 'right_image {}'
         self.lidar_string = 'lidar {}'
+
+        # Load Data
         with rosbag.Bag(bag) as bag:
             print("Loading Image Messages")
             right_image_msgs = [msg for msg in bag.read_messages(
@@ -61,9 +63,21 @@ class BagVisualizer(QWidget):
         self.scrubber.setValue(0)
         self.scrubber.valueChanged.connect(self.set_frame)
 
+        # Playing
+        self.playing = False
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.incr_frame)
+        self.timer.start(33) # 29 frames/sec
+
+    def incr_frame(self):
+        if self.playing:
+            self.scrubber.setValue(self.current_frame + 1)
+
     def set_frame(self):
         i = self.scrubber.value()
         self.load_image(i)
+
+        # Get index of current lidar frame
         lidar_index = min(i / 3, len(self.lidar_timestamps) - 1)
         
         lidar_timestamp = self.lidar_timestamps[lidar_index]
@@ -118,9 +132,12 @@ class BagVisualizer(QWidget):
         self.lidar_vis.resize(x // 2, y)
         self.lidar_vis.move(x // 2, 30)
 
-
     def resizeEvent(self, event):
         self.resize(event.size().width(), event.size().height())
+
+    def keyPressEvent(self, event):
+        if not event.isAutoRepeat() and event.key() == Qt.Key_Space:
+            self.playing = not self.playing
 
 if __name__ == '__main__':
     if len(sys.argv) == 1:
